@@ -1,0 +1,37 @@
+// Fix 1: paste into DAX query view, Run, then "Update model with changes".
+DEFINE
+    // 1 = this trust has a major (Type 1) A&E in the report month. Used as a filter on both tables.
+    MEASURE 'AE Monthly'[Is Major AE] =
+        VAR m = [Report Month]
+        RETURN IF (
+            HASONEVALUE ( 'AE Monthly'[Trust] ),
+            IF ( CALCULATE ( COUNTROWS ( 'AE Monthly' ), 'AE Monthly'[Month] = m, 'AE Monthly'[Has Type 1 AE] = "Yes" ) > 0, 1, 0 )
+        )
+
+    // 1 = worst. Ranks major A&E trusts on 4 hour % in the report month (respects the Region slicer).
+    MEASURE 'AE Monthly'[Worst Rank] =
+        VAR m = [Report Month]
+        VAR p = [4hr % (Month)]
+        VAR majorTrusts =
+            CALCULATETABLE (
+                VALUES ( 'AE Monthly'[Trust] ),
+                REMOVEFILTERS ( 'AE Monthly'[Trust] ),
+                'AE Monthly'[Month] = m,
+                'AE Monthly'[Has Type 1 AE] = "Yes"
+            )
+        RETURN IF ( [Is Major AE] = 1 && NOT ISBLANK ( p ), RANKX ( majorTrusts, [4hr % (Month)], p, ASC ) )
+
+    // Blank instead of -82.0 when a trust has no data that month
+    MEASURE 'AE Monthly'[Gap to Target pts] =
+        VAR p = [4hr % (Month)]
+        RETURN IF ( NOT ISBLANK ( p ), ( p - [Target 4hr %] ) * 100 )
+
+EVALUATE
+TOPN ( 10,
+    FILTER (
+        ADDCOLUMNS ( VALUES ( 'AE Monthly'[Trust] ), "pct", ROUND ( [4hr % (Month)] * 100, 1 ), "rank", [Worst Rank] ),
+        NOT ISBLANK ( [rank] )
+    ),
+    [rank], ASC
+)
+ORDER BY [rank]

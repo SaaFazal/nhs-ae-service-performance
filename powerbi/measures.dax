@@ -1,0 +1,68 @@
+// Paste ALL of this into Power BI's DAX query view, then click "Update model with changes".
+// It adds every measure at once, then shows a check table you can compare with outputs/national_monthly.csv.
+DEFINE
+    // Base totals
+    MEASURE 'AE Monthly'[Total Attendances] = SUM ( 'AE Monthly'[Attendances] )
+    MEASURE 'AE Monthly'[Total Within 4hrs] = SUM ( 'AE Monthly'[Within 4hrs] )
+    MEASURE 'AE Monthly'[Total DTA 12hr Waits] = SUM ( 'AE Monthly'[DTA 12hr Waits] )
+    MEASURE 'AE Monthly'[4hr %] = DIVIDE ( [Total Within 4hrs], [Total Attendances] )
+    MEASURE 'AE Monthly'[Target 4hr %] = 0.82
+
+    // The reporting month: the latest month in the data, unless a month is picked.
+    // Trust and region filters are removed so every trust is judged on the SAME month.
+    MEASURE 'AE Monthly'[Report Month] =
+        CALCULATE (
+            MAX ( 'AE Monthly'[Month] ),
+            REMOVEFILTERS ( 'AE Monthly'[Trust], 'AE Monthly'[Org Code], 'AE Monthly'[Region], 'AE Monthly'[Has Type 1 AE] )
+        )
+    MEASURE 'AE Monthly'[Report Month Title] =
+        "A&E Performance MI Pack: " & FORMAT ( [Report Month], "mmmm yyyy" )
+
+    // This month and last month
+    MEASURE 'AE Monthly'[4hr % (Month)] =
+        VAR m = [Report Month] RETURN CALCULATE ( [4hr %], 'AE Monthly'[Month] = m )
+    MEASURE 'AE Monthly'[4hr % (Prev Month)] =
+        VAR m = [Report Month] RETURN CALCULATE ( [4hr %], 'AE Monthly'[Month] = EDATE ( m, -1 ) )
+    MEASURE 'AE Monthly'[4hr % MoM pts] =
+        ( [4hr % (Month)] - [4hr % (Prev Month)] ) * 100
+    MEASURE 'AE Monthly'[Gap to Target pts] =
+        ( [4hr % (Month)] - [Target 4hr %] ) * 100
+
+    MEASURE 'AE Monthly'[Attendances (Month)] =
+        VAR m = [Report Month] RETURN CALCULATE ( [Total Attendances], 'AE Monthly'[Month] = m )
+    MEASURE 'AE Monthly'[Attendances (Prev Month)] =
+        VAR m = [Report Month] RETURN CALCULATE ( [Total Attendances], 'AE Monthly'[Month] = EDATE ( m, -1 ) )
+    MEASURE 'AE Monthly'[Attendances MoM %] =
+        DIVIDE ( [Attendances (Month)] - [Attendances (Prev Month)], [Attendances (Prev Month)] )
+
+    MEASURE 'AE Monthly'[12hr Waits (Month)] =
+        VAR m = [Report Month] RETURN CALCULATE ( [Total DTA 12hr Waits], 'AE Monthly'[Month] = m )
+    MEASURE 'AE Monthly'[12hr Waits (Prev Month)] =
+        VAR m = [Report Month] RETURN CALCULATE ( [Total DTA 12hr Waits], 'AE Monthly'[Month] = EDATE ( m, -1 ) )
+    MEASURE 'AE Monthly'[12hr Waits MoM] =
+        [12hr Waits (Month)] - [12hr Waits (Prev Month)]
+
+    // RAG against the 82% target. Green 82%+, Amber 78% to 81.9% (last year's floor), Red under 78%
+    MEASURE 'AE Monthly'[RAG Status] =
+        VAR p = [4hr % (Month)]
+        RETURN IF ( ISBLANK ( p ), BLANK (), IF ( p >= 0.82, "Green", IF ( p >= 0.78, "Amber", "Red" ) ) )
+    MEASURE 'AE Monthly'[RAG Colour] =
+        SWITCH ( [RAG Status], "Green", "#2E8B57", "Amber", "#F2A900", "Red", "#C0392B" )
+    MEASURE 'AE Monthly'[Trusts Below Target] =
+        VAR m = [Report Month]
+        RETURN COUNTROWS (
+            FILTER (
+                CALCULATETABLE ( VALUES ( 'AE Monthly'[Org Code] ), 'AE Monthly'[Has Type 1 AE] = "Yes", 'AE Monthly'[Month] = m ),
+                [4hr % (Month)] < 0.82
+            )
+        )
+
+// Check table: one row per month, compare with outputs/national_monthly.csv
+EVALUATE
+SUMMARIZECOLUMNS (
+    'AE Monthly'[Month],
+    "Attendances", [Total Attendances],
+    "4hr %", ROUND ( [4hr %] * 100, 1 ),
+    "12hr waits", [Total DTA 12hr Waits]
+)
+ORDER BY 'AE Monthly'[Month]
